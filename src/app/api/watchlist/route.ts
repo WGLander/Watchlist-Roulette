@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as cheerio from "cheerio";
 
 export const runtime = 'edge';
 
@@ -28,32 +27,53 @@ async function fetchPage(url: string): Promise<string | null> {
   return null;
 }
 
+function decodeHtml(input: string): string {
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, code) => {
+    const named: Record<string, string> = {
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: "\"",
+      apos: "'",
+    };
+    if (code in named) return named[code];
+    if (code.startsWith("#x")) {
+      const num = parseInt(code.slice(2), 16);
+      return Number.isNaN(num) ? match : String.fromCodePoint(num);
+    }
+    if (code.startsWith("#")) {
+      const num = parseInt(code.slice(1), 10);
+      return Number.isNaN(num) ? match : String.fromCodePoint(num);
+    }
+    return match;
+  });
+}
+
 function getPageCount(html: string): number {
-  const $ = cheerio.load(html);
-  const links = $("li.paginate-page a");
-  if (links.length > 0) {
-    const last = links.last().text().trim().replace(",", "");
-    return parseInt(last, 10) || 1;
-  }
-  return 1;
+  const matches = [...html.matchAll(
+    /<li[^>]*class="[^"]*paginate-page[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\d,]+)<\/a>/gi
+  )];
+  if (matches.length === 0) return 1;
+  const last = matches[matches.length - 1]?.[1]?.replace(/,/g, "");
+  const parsed = last ? parseInt(last, 10) : NaN;
+  return Number.isNaN(parsed) ? 1 : parsed;
 }
 
 function parseWatchlistPage(html: string): { name: string; slug: string }[] {
-  const $ = cheerio.load(html);
   const films: { name: string; slug: string }[] = [];
+  const tagRegex = /<div[^>]*class="[^"]*react-component[^"]*"[^>]*>/gi;
+  let match: RegExpExecArray | null;
 
-  $("li.griditem").each((_, el) => {
-    const rc = $(el).find("div.react-component").first();
-    if (!rc.length) return;
-
-    const name =
-      rc.attr("data-item-name") ||
-      rc.attr("data-item-full-display-name") ||
-      "";
-    const slug = rc.attr("data-item-slug") || "";
-
+  while ((match = tagRegex.exec(html))) {
+    const tag = match[0];
+    const nameMatch =
+      /data-item-name="([^"]*)"/i.exec(tag) ||
+      /data-item-full-display-name="([^"]*)"/i.exec(tag);
+    const slugMatch = /data-item-slug="([^"]*)"/i.exec(tag);
+    const name = nameMatch ? decodeHtml(nameMatch[1]) : "";
+    const slug = slugMatch ? decodeHtml(slugMatch[1]) : "";
     if (name && slug) films.push({ name, slug });
-  });
+  }
 
   return films;
 }
@@ -74,8 +94,8 @@ async function scrapeUserWatchlist(
     return { username, films: [], error: `Could not fetch watchlist for '${username}'.` };
   }
 
-  const $ = cheerio.load(firstPageHtml);
-  const bodyClass = $("body").attr("class") || "";
+  const bodyClass =
+    /<body[^>]*class="([^"]*)"/i.exec(firstPageHtml)?.[1] || "";
   if (bodyClass.includes("error")) {
     return { username, films: [], error: `User '${username}' not found on Letterboxd.` };
   }

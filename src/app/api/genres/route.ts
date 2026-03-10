@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as cheerio from "cheerio";
 
 export const runtime = 'edge';
 
@@ -35,16 +34,39 @@ interface FilmMeta {
   runtime: number | null;
 }
 
+function decodeHtml(input: string): string {
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, code) => {
+    const named: Record<string, string> = {
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: "\"",
+      apos: "'",
+    };
+    if (code in named) return named[code];
+    if (code.startsWith("#x")) {
+      const num = parseInt(code.slice(2), 16);
+      return Number.isNaN(num) ? match : String.fromCodePoint(num);
+    }
+    if (code.startsWith("#")) {
+      const num = parseInt(code.slice(1), 10);
+      return Number.isNaN(num) ? match : String.fromCodePoint(num);
+    }
+    return match;
+  });
+}
+
 async function scrapeFilmMeta(slug: string): Promise<FilmMeta> {
   const html = await fetchPage(`https://letterboxd.com/film/${slug}/`);
   if (!html) return { genres: [], runtime: null };
 
-  const $ = cheerio.load(html);
-
   // Parse genres from the JSON-LD script tag (most reliable source)
   // Letterboxd wraps JSON-LD in CDATA comments: /* <![CDATA[ */ {...} /* ]]> */
   let genres: string[] = [];
-  let ldScript = $('script[type="application/ld+json"]').first().html();
+  let ldScript =
+    /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i.exec(
+      html
+    )?.[1] || "";
   if (ldScript) {
     ldScript = ldScript.replace(/\/\*.*?\*\//g, "").trim();
     try {
@@ -57,8 +79,12 @@ async function scrapeFilmMeta(slug: string): Promise<FilmMeta> {
 
   // Parse runtime from the footer text (e.g. "175 mins")
   let runtime: number | null = null;
-  const footer = $("p.text-link.text-footer").text();
-  const match = footer.match(/(\d+)\s*mins?/);
+  const footerHtml =
+    /<p[^>]*class="[^"]*text-footer[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(
+      html
+    )?.[1] || "";
+  const footerText = decodeHtml(footerHtml.replace(/<[^>]+>/g, " "));
+  const match = footerText.match(/(\d+)\s*mins?/);
   if (match) runtime = parseInt(match[1], 10);
 
   return { genres, runtime };
