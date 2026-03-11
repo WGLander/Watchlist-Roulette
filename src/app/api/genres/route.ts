@@ -2,31 +2,49 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = 'edge';
 
-const BROWSER_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-};
-
 const CONCURRENT_LIMIT = 10;
 
-async function fetchPage(url: string): Promise<string | null> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(url, { headers: BROWSER_HEADERS });
-      if (res.ok) return await res.text();
-      if ([403, 429, 503, 520, 521, 522].includes(res.status)) {
-        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-        continue;
-      }
-      return null;
-    } catch {
-      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-    }
+const TMDB_READ_TOKEN = process.env.TMDB_READ_ACCESS_TOKEN;
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
+
+function buildTmdbUrl(id: string): string {
+  if (!TMDB_READ_TOKEN && !TMDB_API_KEY) {
+    throw new Error("Missing TMDB credentials.");
   }
-  return null;
+  const base = `https://api.themoviedb.org/3/movie/${id}`;
+  return TMDB_API_KEY ? `${base}?api_key=${TMDB_API_KEY}` : base;
+}
+
+function tmdbHeaders(): Record<string, string> {
+  return {
+    Accept: "application/json",
+    ...(TMDB_READ_TOKEN ? { Authorization: `Bearer ${TMDB_READ_TOKEN}` } : {}),
+  };
+}
+
+function buildTmdbSearchUrl(query: string): string {
+  if (!TMDB_READ_TOKEN && !TMDB_API_KEY) {
+    throw new Error("Missing TMDB credentials.");
+  }
+  const params = new URLSearchParams({ query });
+  if (TMDB_API_KEY) params.set("api_key", TMDB_API_KEY);
+  return `https://api.themoviedb.org/3/search/movie?${params.toString()}`;
+}
+
+async function fetchTmdbMovie(id: number): Promise<FilmMeta> {
+  console.log(`[tmdb] fetch movie ${id}`);
+  const url = buildTmdbUrl(String(id));
+  const res = await fetch(url, { headers: tmdbHeaders() });
+  if (!res.ok) return { genres: [], runtime: null };
+  const data = await res.json();
+  const genres = Array.isArray(data.genres)
+    ? data.genres.map((g: { name?: string }) => g.name).filter(Boolean)
+    : [];
+  const runtime =
+    typeof data.runtime === "number" && Number.isFinite(data.runtime)
+      ? data.runtime
+      : null;
+  return { genres, runtime };
 }
 
 interface FilmMeta {
@@ -34,64 +52,36 @@ interface FilmMeta {
   runtime: number | null;
 }
 
-function decodeHtml(input: string): string {
-  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, code) => {
-    const named: Record<string, string> = {
-      amp: "&",
-      lt: "<",
-      gt: ">",
-      quot: "\"",
-      apos: "'",
-    };
-    if (code in named) return named[code];
-    if (code.startsWith("#x")) {
-      const num = parseInt(code.slice(2), 16);
-      return Number.isNaN(num) ? match : String.fromCodePoint(num);
-    }
-    if (code.startsWith("#")) {
-      const num = parseInt(code.slice(1), 10);
-      return Number.isNaN(num) ? match : String.fromCodePoint(num);
-    }
-    return match;
-  });
+async function searchTmdbMovie(title: string): Promise<number | null> {
+  const url = buildTmdbSearchUrl(title);
+  const res = await fetch(url, { headers: tmdbHeaders() });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const first = Array.isArray(data.results) ? data.results[0] : null;
+  return typeof first?.id === "number" ? first.id : null;
 }
 
-async function scrapeFilmMeta(slug: string): Promise<FilmMeta> {
-  const html = await fetchPage(`https://letterboxd.com/film/${slug}/`);
-  if (!html) return { genres: [], runtime: null };
+function slugToTitle(slug: string): string {
+  return slug.replace(/-/g, " ").trim();
+}
 
-  // Parse genres from the JSON-LD script tag (most reliable source)
-  // Letterboxd wraps JSON-LD in CDATA comments: /* <![CDATA[ */ {...} /* ]]> */
-  let genres: string[] = [];
-  let ldScript =
-    /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i.exec(
-      html
-    )?.[1] || "";
-  if (ldScript) {
-    ldScript = ldScript.replace(/\/\*.*?\*\//g, "").trim();
-    try {
-      const ld = JSON.parse(ldScript);
-      if (Array.isArray(ld.genre)) genres = ld.genre;
-    } catch {
-      // fall through
-    }
-  }
-
-  // Parse runtime from the footer text (e.g. "175 mins")
-  let runtime: number | null = null;
-  const footerHtml =
-    /<p[^>]*class="[^"]*text-footer[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(
-      html
-    )?.[1] || "";
-  const footerText = decodeHtml(footerHtml.replace(/<[^>]+>/g, " "));
-  const match = footerText.match(/(\d+)\s*mins?/);
-  if (match) runtime = parseInt(match[1], 10);
-
-  return { genres, runtime };
+async function scrapeFilmMeta(slug: string, name?: string): Promise<FilmMeta> {
+  const title = name?.trim() || slugToTitle(slug);
+  if (!title) return { genres: [], runtime: null };
+  const id = await searchTmdbMovie(title);
+  if (!id) return { genres: [], runtime: null };
+  return fetchTmdbMovie(id);
 }
 
 export async function POST(request: NextRequest) {
-  let body: { slugs?: string[] };
+  if (!TMDB_READ_TOKEN && !TMDB_API_KEY) {
+    return NextResponse.json(
+      { error: "Missing TMDB credentials on the server." },
+      { status: 500 }
+    );
+  }
+
+  let body: { slugs?: string[]; items?: { slug: string; name?: string }[] };
   try {
     body = await request.json();
   } catch {
@@ -101,27 +91,35 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const slugs = body.slugs;
-  if (!Array.isArray(slugs) || slugs.length === 0) {
+  const items =
+    Array.isArray(body.items) && body.items.length > 0
+      ? body.items
+      : Array.isArray(body.slugs)
+        ? body.slugs.map((slug) => ({ slug }))
+        : [];
+
+  if (items.length === 0) {
     return NextResponse.json(
-      { error: "Missing 'slugs' array in request body." },
+      { error: "Missing 'items' or 'slugs' in request body." },
       { status: 400 }
     );
   }
 
   // Deduplicate
-  const uniqueSlugs = [...new Set(slugs)];
+  const uniqueItems = Array.from(
+    new Map(items.map((i) => [i.slug, i])).values()
+  );
   const genreMap: Record<string, string[]> = {};
   const runtimeMap: Record<string, number | null> = {};
   const allGenresSet = new Set<string>();
 
   // Fetch in chunks
-  for (let i = 0; i < uniqueSlugs.length; i += CONCURRENT_LIMIT) {
-    const chunk = uniqueSlugs.slice(i, i + CONCURRENT_LIMIT);
+  for (let i = 0; i < uniqueItems.length; i += CONCURRENT_LIMIT) {
+    const chunk = uniqueItems.slice(i, i + CONCURRENT_LIMIT);
     const results = await Promise.all(
-      chunk.map(async (slug) => ({
-        slug,
-        meta: await scrapeFilmMeta(slug),
+      chunk.map(async (item) => ({
+        slug: item.slug,
+        meta: await scrapeFilmMeta(item.slug, item.name),
       }))
     );
     for (const r of results) {
@@ -129,7 +127,7 @@ export async function POST(request: NextRequest) {
       runtimeMap[r.slug] = r.meta.runtime;
       for (const g of r.meta.genres) allGenresSet.add(g);
     }
-    if (i + CONCURRENT_LIMIT < uniqueSlugs.length) {
+    if (i + CONCURRENT_LIMIT < uniqueItems.length) {
       await new Promise((r) => setTimeout(r, 300));
     }
   }

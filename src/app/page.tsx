@@ -201,13 +201,13 @@ export default function Home() {
     if (dataFetched || dataFetching) return;
     setDataFetching(true);
 
-    const slugs = allFilms.map((f) => f.slug);
+    const items = allFilms.map((f) => ({ slug: f.slug, name: f.name }));
 
     try {
       const res = await fetch("/api/genres", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slugs }),
+        body: JSON.stringify({ items }),
       });
       const data = await res.json();
 
