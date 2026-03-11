@@ -4,30 +4,37 @@ export const runtime = 'edge';
 
 const CONCURRENT_LIMIT = 10;
 
-const TMDB_READ_TOKEN = process.env.TMDB_READ_ACCESS_TOKEN;
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
+function getTmdbCreds(): { token?: string; key?: string } {
+  return {
+    token: process.env.TMDB_READ_ACCESS_TOKEN,
+    key: process.env.TMDB_API_KEY,
+  };
+}
 
 function buildTmdbUrl(id: string): string {
-  if (!TMDB_READ_TOKEN && !TMDB_API_KEY) {
+  const { token, key } = getTmdbCreds();
+  if (!token && !key) {
     throw new Error("Missing TMDB credentials.");
   }
   const base = `https://api.themoviedb.org/3/movie/${id}`;
-  return TMDB_API_KEY ? `${base}?api_key=${TMDB_API_KEY}` : base;
+  return key ? `${base}?api_key=${key}` : base;
 }
 
 function tmdbHeaders(): Record<string, string> {
+  const { token } = getTmdbCreds();
   return {
     Accept: "application/json",
-    ...(TMDB_READ_TOKEN ? { Authorization: `Bearer ${TMDB_READ_TOKEN}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 
 function buildTmdbSearchUrl(query: string): string {
-  if (!TMDB_READ_TOKEN && !TMDB_API_KEY) {
+  const { token, key } = getTmdbCreds();
+  if (!token && !key) {
     throw new Error("Missing TMDB credentials.");
   }
   const params = new URLSearchParams({ query });
-  if (TMDB_API_KEY) params.set("api_key", TMDB_API_KEY);
+  if (key) params.set("api_key", key);
   return `https://api.themoviedb.org/3/search/movie?${params.toString()}`;
 }
 
@@ -74,7 +81,8 @@ async function scrapeFilmMeta(slug: string, name?: string): Promise<FilmMeta> {
 }
 
 export async function POST(request: NextRequest) {
-  if (!TMDB_READ_TOKEN && !TMDB_API_KEY) {
+  const { token, key } = getTmdbCreds();
+  if (!token && !key) {
     return NextResponse.json(
       { error: "Missing TMDB credentials on the server." },
       { status: 500 }
