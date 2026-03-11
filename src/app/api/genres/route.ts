@@ -5,6 +5,11 @@ export const runtime = 'edge';
 const CONCURRENT_LIMIT = 5;
 const MAX_TMDB_RETRIES = 3;
 const RETRY_STATUSES = new Set([429, 502, 503, 504]);
+const MAX_CONCURRENT_TMDB = 2;
+const MIN_TMDB_INTERVAL_MS = 150;
+let tmdbInFlight = 0;
+let tmdbLastStart = 0;
+const tmdbWaiters: Array<() => void> = [];
 
 function getTmdbCreds(): { token?: string; key?: string } {
   try {
@@ -61,11 +66,38 @@ function getRetryDelayMs(attempt: number, retryAfterHeader: string | null): numb
   return Math.min(10_000, 500 * (attempt + 1) ** 2);
 }
 
+async function acquireTmdbSlot(): Promise<void> {
+  while (tmdbInFlight >= MAX_CONCURRENT_TMDB) {
+    await new Promise<void>((resolve) => tmdbWaiters.push(resolve));
+  }
+  tmdbInFlight += 1;
+  const now = Date.now();
+  const wait = Math.max(0, tmdbLastStart + MIN_TMDB_INTERVAL_MS - now);
+  if (wait > 0) {
+    await new Promise((r) => setTimeout(r, wait));
+  }
+  tmdbLastStart = Date.now();
+}
+
+function releaseTmdbSlot(): void {
+  tmdbInFlight = Math.max(0, tmdbInFlight - 1);
+  const next = tmdbWaiters.shift();
+  if (next) next();
+}
+
 async function fetchTmdbJson(url: string): Promise<any | null> {
   for (let attempt = 0; attempt < MAX_TMDB_RETRIES; attempt++) {
-    const res = await fetch(url, { headers: tmdbHeaders() });
-    if (res.ok) return res.json();
-    if (!RETRY_STATUSES.has(res.status)) return null;
+    await acquireTmdbSlot();
+    let res: Response | null = null;
+    try {
+      res = await fetch(url, { headers: tmdbHeaders() });
+    } catch {
+      res = null;
+    } finally {
+      releaseTmdbSlot();
+    }
+    if (res?.ok) return res.json();
+    if (!res || !RETRY_STATUSES.has(res.status)) return null;
     const delay = getRetryDelayMs(attempt, res.headers.get("retry-after"));
     await new Promise((r) => setTimeout(r, delay));
   }
