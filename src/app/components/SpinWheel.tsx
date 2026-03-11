@@ -33,10 +33,12 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
   const [rotation, setRotation] = useState(0);
   const rotationRef = useRef(0);
   const animFrameRef = useRef<number>(0);
+  const [maxSize, setMaxSize] = useState(0);
 
   // Scale wheel size up for large lists so segments stay legible
   const baseSize = 420;
-  const size = items.length > 60 ? 520 : items.length > 30 ? 470 : baseSize;
+  const desiredSize = items.length > 60 ? 520 : items.length > 30 ? 470 : baseSize;
+  const size = Math.min(desiredSize, maxSize || desiredSize);
   const center = size / 2;
   const radius = size / 2 - 8;
 
@@ -133,6 +135,18 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
   useEffect(() => {
     drawWheel(rotation);
   }, [drawWheel, rotation]);
+
+  useEffect(() => {
+    function updateMaxSize() {
+      const width = window.innerWidth;
+      const available = Math.floor(width - 32);
+      setMaxSize(Math.max(0, available));
+    }
+
+    updateMaxSize();
+    window.addEventListener("resize", updateMaxSize);
+    return () => window.removeEventListener("resize", updateMaxSize);
+  }, []);
 
   function spin() {
     if (spinning || displayItems.length === 0) return;
