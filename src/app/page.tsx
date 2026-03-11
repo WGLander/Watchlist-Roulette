@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, FormEvent } from "react";
+import { useState, useMemo, useCallback, useEffect, FormEvent } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import {
@@ -236,6 +236,11 @@ export default function Home() {
       setDataFetching(false);
     }
   }, [allFilms, dataFetched, dataFetching]);
+
+  useEffect(() => {
+    if (!loaded || dataFetched || dataFetching || allFilms.length === 0) return;
+    void fetchFilterData();
+  }, [loaded, dataFetched, dataFetching, allFilms.length, fetchFilterData]);
 
   function handleReset() {
     setUsers([]);
