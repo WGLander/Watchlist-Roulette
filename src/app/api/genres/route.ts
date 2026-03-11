@@ -56,6 +56,25 @@ function buildTmdbSearchUrl(query: string, year?: string): string {
   return `https://api.themoviedb.org/3/search/movie?${params.toString()}`;
 }
 
+type TmdbCallStats = {
+  ok: number;
+  fail: number;
+  retries: number;
+  statusCounts: Record<string, number>;
+};
+
+type TmdbStats = {
+  search: TmdbCallStats;
+  details: TmdbCallStats;
+};
+
+function createTmdbStats(): TmdbStats {
+  return {
+    search: { ok: 0, fail: 0, retries: 0, statusCounts: {} },
+    details: { ok: 0, fail: 0, retries: 0, statusCounts: {} },
+  };
+}
+
 function getRetryDelayMs(attempt: number, retryAfterHeader: string | null): number {
   if (retryAfterHeader) {
     const parsed = Number.parseFloat(retryAfterHeader);
@@ -85,7 +104,11 @@ function releaseTmdbSlot(): void {
   if (next) next();
 }
 
-async function fetchTmdbJson(url: string): Promise<any | null> {
+async function fetchTmdbJson(
+  url: string,
+  kind: keyof TmdbStats,
+  stats?: TmdbStats
+): Promise<any | null> {
   for (let attempt = 0; attempt < MAX_TMDB_RETRIES; attempt++) {
     await acquireTmdbSlot();
     let res: Response | null = null;
@@ -96,19 +119,35 @@ async function fetchTmdbJson(url: string): Promise<any | null> {
     } finally {
       releaseTmdbSlot();
     }
-    if (res?.ok) return res.json();
-    if (!res || !RETRY_STATUSES.has(res.status)) return null;
+    if (res?.ok) {
+      if (stats) stats[kind].ok += 1;
+      return res.json();
+    }
+    const statusKey = res ? String(res.status) : "fetch_error";
+    if (stats) {
+      stats[kind].statusCounts[statusKey] =
+        (stats[kind].statusCounts[statusKey] || 0) + 1;
+    }
+    if (!res || !RETRY_STATUSES.has(res.status)) {
+      if (stats) stats[kind].fail += 1;
+      return null;
+    }
+    if (stats) stats[kind].retries += 1;
     const delay = getRetryDelayMs(attempt, res.headers.get("retry-after"));
     await new Promise((r) => setTimeout(r, delay));
   }
+  if (stats) stats[kind].fail += 1;
   return null;
 }
 
-async function fetchTmdbMovie(id: number): Promise<FilmMeta> {
+async function fetchTmdbMovie(
+  id: number,
+  stats?: TmdbStats
+): Promise<FilmMeta> {
   try {
     console.log(`[tmdb] fetch movie ${id}`);
     const url = buildTmdbUrl(String(id));
-    const data = await fetchTmdbJson(url);
+    const data = await fetchTmdbJson(url, "details", stats);
     if (!data) return { genres: [], runtime: null };
     const genres = Array.isArray(data.genres)
       ? data.genres.map((g: { name?: string }) => g.name).filter(Boolean)
@@ -181,11 +220,12 @@ function pickBestResult(
 
 async function searchTmdbMovie(
   title: string,
-  year?: string
+  year: string | undefined,
+  stats?: TmdbStats
 ): Promise<number | null> {
   try {
     const url = buildTmdbSearchUrl(title, year);
-    const data = await fetchTmdbJson(url);
+    const data = await fetchTmdbJson(url, "search", stats);
     if (!data) return null;
     const results: TmdbSearchResult[] = Array.isArray(data.results)
       ? data.results
@@ -203,23 +243,27 @@ function slugToTitle(slug: string): string {
   return slug.replace(/-/g, " ").trim();
 }
 
-async function scrapeFilmMeta(slug: string, name?: string): Promise<FilmMeta> {
+async function scrapeFilmMeta(
+  slug: string,
+  name: string | undefined,
+  stats?: TmdbStats
+): Promise<FilmMeta> {
   const year = extractYearFromSlug(slug);
   const title = name?.trim() || slugToTitle(stripYearSuffix(slug));
   if (!title) return { genres: [], runtime: null };
-  let id = await searchTmdbMovie(title, year);
+  let id = await searchTmdbMovie(title, year, stats);
   if (!id && year) {
-    id = await searchTmdbMovie(title);
+    id = await searchTmdbMovie(title, undefined, stats);
   }
   if (!id && title !== slugToTitle(stripYearSuffix(slug))) {
     const fallbackTitle = slugToTitle(stripYearSuffix(slug));
-    id = await searchTmdbMovie(fallbackTitle, year);
+    id = await searchTmdbMovie(fallbackTitle, year, stats);
     if (!id && year) {
-      id = await searchTmdbMovie(fallbackTitle);
+      id = await searchTmdbMovie(fallbackTitle, undefined, stats);
     }
   }
   if (!id) return { genres: [], runtime: null };
-  return fetchTmdbMovie(id);
+  return fetchTmdbMovie(id, stats);
 }
 
 export async function POST(request: NextRequest) {
@@ -234,7 +278,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: { slugs?: string[]; items?: { slug: string; name?: string }[] };
+  let body: {
+    slugs?: string[];
+    items?: { slug: string; name?: string }[];
+    debug?: boolean;
+  };
   try {
     body = await request.json();
   } catch {
@@ -250,6 +298,9 @@ export async function POST(request: NextRequest) {
       : Array.isArray(body.slugs)
         ? body.slugs.map((slug) => ({ slug }))
         : [];
+  const debug =
+    body.debug === true || request.nextUrl.searchParams.get("debug") === "1";
+  const tmdbStats = debug ? createTmdbStats() : undefined;
 
   if (items.length === 0) {
     return NextResponse.json(
@@ -273,7 +324,7 @@ export async function POST(request: NextRequest) {
       const results = await Promise.all(
         chunk.map(async (item) => ({
           slug: item.slug,
-          meta: await scrapeFilmMeta(item.slug, item.name),
+          meta: await scrapeFilmMeta(item.slug, item.name, tmdbStats),
         }))
       );
       for (const r of results) {
@@ -290,6 +341,7 @@ export async function POST(request: NextRequest) {
       genres: genreMap,
       runtimes: runtimeMap,
       allGenres: [...allGenresSet].sort(),
+      ...(debug && tmdbStats ? { tmdbStats } : {}),
     });
   } catch (err) {
     console.error("[genres] handler failed", err);
@@ -297,6 +349,7 @@ export async function POST(request: NextRequest) {
       {
         error: "TMDB lookup failed.",
         envPresent: { token: !!token, key: !!key },
+        ...(debug && tmdbStats ? { tmdbStats } : {}),
       },
       { status: 500 }
     );
