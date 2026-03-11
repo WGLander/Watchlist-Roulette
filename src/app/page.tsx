@@ -479,7 +479,9 @@ export default function Home() {
                   {dataFetching && (
                     <div className="flex items-center justify-center gap-2 text-muted py-8">
                       <Loader2 className="w-5 h-5 animate-spin text-accent" />
-                      <span className="text-sm">Loading genres...</span>
+                      <span className="text-sm">
+                        Loading genres (this may take a while)...
+                      </span>
                     </div>
                   )}
 
@@ -550,7 +552,9 @@ export default function Home() {
                   {dataFetching && (
                     <div className="flex items-center justify-center gap-2 text-muted py-8">
                       <Loader2 className="w-5 h-5 animate-spin text-accent" />
-                      <span className="text-sm">Loading runtime data...</span>
+                      <span className="text-sm">
+                        Loading runtime data (this may take a while)...
+                      </span>
                     </div>
                   )}
 

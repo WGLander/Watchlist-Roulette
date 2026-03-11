@@ -88,7 +88,7 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
         const fontSize = Math.max(5, Math.min(12, (segAngle * radius) / 2.2));
         ctx.fillStyle = "#ffffff";
         ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = "left";
+        ctx.textAlign = "right";
         ctx.textBaseline = "middle";
 
         // Truncate label based on available arc space
@@ -99,7 +99,7 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
         const raw = displayItems[i];
         const label =
           raw.length > maxChars ? raw.slice(0, maxChars - 1) + "…" : raw;
-        ctx.fillText(label, radius * 0.15, 0);
+        ctx.fillText(label, radius - 10, 0);
 
         ctx.restore();
       }
