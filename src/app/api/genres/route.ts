@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = 'edge';
 
-const CONCURRENT_LIMIT = 10;
+const CONCURRENT_LIMIT = 5;
+const MAX_TMDB_RETRIES = 3;
+const RETRY_STATUSES = new Set([429, 502, 503, 504]);
 
 function getTmdbCreds(): { token?: string; key?: string } {
   try {
@@ -49,13 +51,33 @@ function buildTmdbSearchUrl(query: string, year?: string): string {
   return `https://api.themoviedb.org/3/search/movie?${params.toString()}`;
 }
 
+function getRetryDelayMs(attempt: number, retryAfterHeader: string | null): number {
+  if (retryAfterHeader) {
+    const parsed = Number.parseFloat(retryAfterHeader);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(10_000, parsed * 1000);
+    }
+  }
+  return Math.min(10_000, 500 * (attempt + 1) ** 2);
+}
+
+async function fetchTmdbJson(url: string): Promise<any | null> {
+  for (let attempt = 0; attempt < MAX_TMDB_RETRIES; attempt++) {
+    const res = await fetch(url, { headers: tmdbHeaders() });
+    if (res.ok) return res.json();
+    if (!RETRY_STATUSES.has(res.status)) return null;
+    const delay = getRetryDelayMs(attempt, res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, delay));
+  }
+  return null;
+}
+
 async function fetchTmdbMovie(id: number): Promise<FilmMeta> {
   try {
     console.log(`[tmdb] fetch movie ${id}`);
     const url = buildTmdbUrl(String(id));
-    const res = await fetch(url, { headers: tmdbHeaders() });
-    if (!res.ok) return { genres: [], runtime: null };
-    const data = await res.json();
+    const data = await fetchTmdbJson(url);
+    if (!data) return { genres: [], runtime: null };
     const genres = Array.isArray(data.genres)
       ? data.genres.map((g: { name?: string }) => g.name).filter(Boolean)
       : [];
@@ -131,9 +153,8 @@ async function searchTmdbMovie(
 ): Promise<number | null> {
   try {
     const url = buildTmdbSearchUrl(title, year);
-    const res = await fetch(url, { headers: tmdbHeaders() });
-    if (!res.ok) return null;
-    const data = await res.json();
+    const data = await fetchTmdbJson(url);
+    if (!data) return null;
     const results: TmdbSearchResult[] = Array.isArray(data.results)
       ? data.results
       : [];
