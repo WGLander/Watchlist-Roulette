@@ -33,12 +33,18 @@ function tmdbHeaders(): Record<string, string> {
   };
 }
 
-function buildTmdbSearchUrl(query: string): string {
+function buildTmdbSearchUrl(query: string, year?: string): string {
   const { token, key } = getTmdbCreds();
   if (!token && !key) {
     throw new Error("Missing TMDB credentials.");
   }
-  const params = new URLSearchParams({ query });
+  const params = new URLSearchParams({
+    query,
+    include_adult: "false",
+    language: "en-US",
+    page: "1",
+  });
+  if (year) params.set("primary_release_year", year);
   if (key) params.set("api_key", key);
   return `https://api.themoviedb.org/3/search/movie?${params.toString()}`;
 }
@@ -69,14 +75,71 @@ interface FilmMeta {
   runtime: number | null;
 }
 
-async function searchTmdbMovie(title: string): Promise<number | null> {
+type TmdbSearchResult = {
+  id?: number;
+  title?: string;
+  original_title?: string;
+  release_date?: string;
+};
+
+function normalizeTitle(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function extractYearFromSlug(slug: string): string | undefined {
+  const match = slug.match(/-(\d{4})$/);
+  return match ? match[1] : undefined;
+}
+
+function stripYearSuffix(slug: string): string {
+  return slug.replace(/-\d{4}$/, "");
+}
+
+function pickBestResult(
+  results: TmdbSearchResult[],
+  targetTitle: string,
+  year?: string
+): TmdbSearchResult | undefined {
+  const target = normalizeTitle(targetTitle);
+  let best: { score: number; item: TmdbSearchResult } | null = null;
+
+  for (const item of results) {
+    const title = item.title || "";
+    const original = item.original_title || "";
+    const normTitle = normalizeTitle(title);
+    const normOriginal = normalizeTitle(original);
+    let score = 0;
+
+    if (normTitle === target || normOriginal === target) score += 3;
+    else if (normTitle.includes(target) || target.includes(normTitle))
+      score += 1;
+
+    if (year && item.release_date?.startsWith(year)) score += 2;
+
+    if (!best || score > best.score) best = { score, item };
+  }
+
+  return best?.item;
+}
+
+async function searchTmdbMovie(
+  title: string,
+  year?: string
+): Promise<number | null> {
   try {
-    const url = buildTmdbSearchUrl(title);
+    const url = buildTmdbSearchUrl(title, year);
     const res = await fetch(url, { headers: tmdbHeaders() });
     if (!res.ok) return null;
     const data = await res.json();
-    const first = Array.isArray(data.results) ? data.results[0] : null;
-    return typeof first?.id === "number" ? first.id : null;
+    const results: TmdbSearchResult[] = Array.isArray(data.results)
+      ? data.results
+      : [];
+    if (results.length === 0) return null;
+    const picked = pickBestResult(results, title, year) || results[0];
+    return typeof picked?.id === "number" ? picked.id : null;
   } catch (err) {
     console.error("[tmdb] search failed", err);
     return null;
@@ -88,9 +151,20 @@ function slugToTitle(slug: string): string {
 }
 
 async function scrapeFilmMeta(slug: string, name?: string): Promise<FilmMeta> {
-  const title = name?.trim() || slugToTitle(slug);
+  const year = extractYearFromSlug(slug);
+  const title = name?.trim() || slugToTitle(stripYearSuffix(slug));
   if (!title) return { genres: [], runtime: null };
-  const id = await searchTmdbMovie(title);
+  let id = await searchTmdbMovie(title, year);
+  if (!id && year) {
+    id = await searchTmdbMovie(title);
+  }
+  if (!id && title !== slugToTitle(stripYearSuffix(slug))) {
+    const fallbackTitle = slugToTitle(stripYearSuffix(slug));
+    id = await searchTmdbMovie(fallbackTitle, year);
+    if (!id && year) {
+      id = await searchTmdbMovie(fallbackTitle);
+    }
+  }
   if (!id) return { genres: [], runtime: null };
   return fetchTmdbMovie(id);
 }
