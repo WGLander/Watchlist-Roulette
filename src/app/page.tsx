@@ -201,23 +201,49 @@ export default function Home() {
     if (dataFetched || dataFetching) return;
     setDataFetching(true);
 
-    const items = allFilms.map((f) => ({ slug: f.slug, name: f.name }));
-
     try {
-      const res = await fetch("/api/genres", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
-      });
-      const data = await res.json();
+      const items = allFilms.map((f) => ({ slug: f.slug, name: f.name }));
+      const chunkSize = 20;
+      const mergedGenres: Record<string, string[]> = {};
+      const mergedRuntimes: Record<string, number | null> = {};
+      const mergedGenreSet = new Set<string>();
+      let hadSuccess = false;
 
-      if (res.ok) {
-        setGenreMap(data.genres);
-        setAllGenres(data.allGenres || []);
+      for (let i = 0; i < items.length; i += chunkSize) {
+        const chunk = items.slice(i, i + chunkSize);
+        try {
+          const res = await fetch("/api/genres", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items: chunk }),
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+          hadSuccess = true;
 
-        const runtimes: Record<string, number | null> = data.runtimes || {};
-        setRuntimeMap(runtimes);
-        const validRuntimes = Object.values(runtimes).filter(
+          for (const [slug, genres] of Object.entries<string[]>(
+            data.genres || {},
+          )) {
+            mergedGenres[slug] = genres;
+            for (const g of genres) mergedGenreSet.add(g);
+          }
+
+          for (const [slug, runtime] of Object.entries<number | null>(
+            data.runtimes || {},
+          )) {
+            mergedRuntimes[slug] = runtime;
+          }
+        } catch {
+          // ignore failed chunk
+        }
+      }
+
+      if (hadSuccess) {
+        setGenreMap(mergedGenres);
+        setRuntimeMap(mergedRuntimes);
+        setAllGenres([...mergedGenreSet].sort());
+
+        const validRuntimes = Object.values(mergedRuntimes).filter(
           (r): r is number => r != null,
         );
         if (validRuntimes.length > 0) {
