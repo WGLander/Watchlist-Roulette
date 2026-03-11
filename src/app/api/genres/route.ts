@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const items =
+  const items: { slug: string; name?: string }[] =
     Array.isArray(body.items) && body.items.length > 0
       ? body.items
       : Array.isArray(body.slugs)
