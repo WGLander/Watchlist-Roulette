@@ -203,7 +203,7 @@ export default function Home() {
 
     try {
       const items = allFilms.map((f) => ({ slug: f.slug, name: f.name }));
-      const chunkSize = 20;
+      const chunkSize = 10;
       const mergedGenres: Record<string, string[]> = {};
       const mergedRuntimes: Record<string, number | null> = {};
       const mergedGenreSet = new Set<string>();

@@ -187,6 +187,15 @@ function extractYearFromSlug(slug: string): string | undefined {
   return match ? match[1] : undefined;
 }
 
+function extractYearFromName(name: string): string | undefined {
+  const match = name.match(/\((\d{4})\)\s*$/);
+  return match ? match[1] : undefined;
+}
+
+function stripYearFromName(name: string): string {
+  return name.replace(/\s*\(\d{4}\)\s*$/, "").trim();
+}
+
 function stripYearSuffix(slug: string): string {
   return slug.replace(/-\d{4}$/, "");
 }
@@ -248,18 +257,24 @@ async function scrapeFilmMeta(
   name: string | undefined,
   stats?: TmdbStats
 ): Promise<FilmMeta> {
-  const year = extractYearFromSlug(slug);
-  const title = name?.trim() || slugToTitle(stripYearSuffix(slug));
+  const rawName = name?.trim() || "";
+  const year = extractYearFromName(rawName) || extractYearFromSlug(slug);
+  const hasName = rawName.length > 0;
+  const title = hasName
+    ? stripYearFromName(rawName)
+    : slugToTitle(stripYearSuffix(slug));
   if (!title) return { genres: [], runtime: null };
   let id = await searchTmdbMovie(title, year, stats);
   if (!id && year) {
     id = await searchTmdbMovie(title, undefined, stats);
   }
-  if (!id && title !== slugToTitle(stripYearSuffix(slug))) {
+  if (!id && !hasName) {
     const fallbackTitle = slugToTitle(stripYearSuffix(slug));
-    id = await searchTmdbMovie(fallbackTitle, year, stats);
-    if (!id && year) {
-      id = await searchTmdbMovie(fallbackTitle, undefined, stats);
+    if (fallbackTitle && fallbackTitle !== title) {
+      id = await searchTmdbMovie(fallbackTitle, year, stats);
+      if (!id && year) {
+        id = await searchTmdbMovie(fallbackTitle, undefined, stats);
+      }
     }
   }
   if (!id) return { genres: [], runtime: null };
