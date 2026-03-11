@@ -5,10 +5,15 @@ export const runtime = 'edge';
 const CONCURRENT_LIMIT = 10;
 
 function getTmdbCreds(): { token?: string; key?: string } {
-  return {
-    token: process.env.TMDB_READ_ACCESS_TOKEN,
-    key: process.env.TMDB_API_KEY,
-  };
+  try {
+    const env = typeof process !== "undefined" ? process.env : undefined;
+    return {
+      token: env?.TMDB_READ_ACCESS_TOKEN,
+      key: env?.TMDB_API_KEY,
+    };
+  } catch {
+    return {};
+  }
 }
 
 function buildTmdbUrl(id: string): string {
@@ -39,19 +44,24 @@ function buildTmdbSearchUrl(query: string): string {
 }
 
 async function fetchTmdbMovie(id: number): Promise<FilmMeta> {
-  console.log(`[tmdb] fetch movie ${id}`);
-  const url = buildTmdbUrl(String(id));
-  const res = await fetch(url, { headers: tmdbHeaders() });
-  if (!res.ok) return { genres: [], runtime: null };
-  const data = await res.json();
-  const genres = Array.isArray(data.genres)
-    ? data.genres.map((g: { name?: string }) => g.name).filter(Boolean)
-    : [];
-  const runtime =
-    typeof data.runtime === "number" && Number.isFinite(data.runtime)
-      ? data.runtime
-      : null;
-  return { genres, runtime };
+  try {
+    console.log(`[tmdb] fetch movie ${id}`);
+    const url = buildTmdbUrl(String(id));
+    const res = await fetch(url, { headers: tmdbHeaders() });
+    if (!res.ok) return { genres: [], runtime: null };
+    const data = await res.json();
+    const genres = Array.isArray(data.genres)
+      ? data.genres.map((g: { name?: string }) => g.name).filter(Boolean)
+      : [];
+    const runtime =
+      typeof data.runtime === "number" && Number.isFinite(data.runtime)
+        ? data.runtime
+        : null;
+    return { genres, runtime };
+  } catch (err) {
+    console.error("[tmdb] fetch failed", err);
+    return { genres: [], runtime: null };
+  }
 }
 
 interface FilmMeta {
@@ -60,12 +70,17 @@ interface FilmMeta {
 }
 
 async function searchTmdbMovie(title: string): Promise<number | null> {
-  const url = buildTmdbSearchUrl(title);
-  const res = await fetch(url, { headers: tmdbHeaders() });
-  if (!res.ok) return null;
-  const data = await res.json();
-  const first = Array.isArray(data.results) ? data.results[0] : null;
-  return typeof first?.id === "number" ? first.id : null;
+  try {
+    const url = buildTmdbSearchUrl(title);
+    const res = await fetch(url, { headers: tmdbHeaders() });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const first = Array.isArray(data.results) ? data.results[0] : null;
+    return typeof first?.id === "number" ? first.id : null;
+  } catch (err) {
+    console.error("[tmdb] search failed", err);
+    return null;
+  }
 }
 
 function slugToTitle(slug: string): string {
@@ -84,7 +99,10 @@ export async function POST(request: NextRequest) {
   const { token, key } = getTmdbCreds();
   if (!token && !key) {
     return NextResponse.json(
-      { error: "Missing TMDB credentials on the server." },
+      {
+        error: "Missing TMDB credentials on the server.",
+        envPresent: { token: false, key: false },
+      },
       { status: 500 }
     );
   }
@@ -121,28 +139,39 @@ export async function POST(request: NextRequest) {
   const runtimeMap: Record<string, number | null> = {};
   const allGenresSet = new Set<string>();
 
-  // Fetch in chunks
-  for (let i = 0; i < uniqueItems.length; i += CONCURRENT_LIMIT) {
-    const chunk = uniqueItems.slice(i, i + CONCURRENT_LIMIT);
-    const results = await Promise.all(
-      chunk.map(async (item) => ({
-        slug: item.slug,
-        meta: await scrapeFilmMeta(item.slug, item.name),
-      }))
-    );
-    for (const r of results) {
-      genreMap[r.slug] = r.meta.genres;
-      runtimeMap[r.slug] = r.meta.runtime;
-      for (const g of r.meta.genres) allGenresSet.add(g);
+  try {
+    // Fetch in chunks
+    for (let i = 0; i < uniqueItems.length; i += CONCURRENT_LIMIT) {
+      const chunk = uniqueItems.slice(i, i + CONCURRENT_LIMIT);
+      const results = await Promise.all(
+        chunk.map(async (item) => ({
+          slug: item.slug,
+          meta: await scrapeFilmMeta(item.slug, item.name),
+        }))
+      );
+      for (const r of results) {
+        genreMap[r.slug] = r.meta.genres;
+        runtimeMap[r.slug] = r.meta.runtime;
+        for (const g of r.meta.genres) allGenresSet.add(g);
+      }
+      if (i + CONCURRENT_LIMIT < uniqueItems.length) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
     }
-    if (i + CONCURRENT_LIMIT < uniqueItems.length) {
-      await new Promise((r) => setTimeout(r, 300));
-    }
-  }
 
-  return NextResponse.json({
-    genres: genreMap,
-    runtimes: runtimeMap,
-    allGenres: [...allGenresSet].sort(),
-  });
+    return NextResponse.json({
+      genres: genreMap,
+      runtimes: runtimeMap,
+      allGenres: [...allGenresSet].sort(),
+    });
+  } catch (err) {
+    console.error("[genres] handler failed", err);
+    return NextResponse.json(
+      {
+        error: "TMDB lookup failed.",
+        envPresent: { token: !!token, key: !!key },
+      },
+      { status: 500 }
+    );
+  }
 }
