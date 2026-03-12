@@ -2,10 +2,10 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #2b2b44;
+  --foreground: #5087e0;
   --card: #f8f9fa;
-  --card-foreground: #2b2b44;
-  --accent: #2b2b44;
+  --card-foreground: #5087e0;
+  --accent: #5087e0;
   --accent-hover: #1f1f33;
   --accent-foreground: #ffffff;
   --muted: #6b7280;

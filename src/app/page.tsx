@@ -288,7 +288,7 @@ export default function Home() {
       <div className="text-center mb-8">
         <div className="flex items-center justify-center mb-2">
           <Image
-            src="/title.png"
+            src="/title2.png"
             alt="Watchlist Roulette"
             width={500}
             height={250}
@@ -318,7 +318,7 @@ export default function Home() {
                     }
                     value={val}
                     onChange={(e) => updateInput(i, e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-input border border-border text-foreground placeholder:text-muted text-sm focus:outline-none focus:border-accent transition-colors"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-input border border-border text-slate-900 placeholder:text-muted text-sm focus:outline-none focus:border-accent transition-colors"
                   />
                 </div>
                 {inputs.length > 1 && (
