@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Watchlist Roulette",
   description: "Spin the wheel to pick a film from your Letterboxd watchlist",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 export default function RootLayout({

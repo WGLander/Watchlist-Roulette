@@ -699,7 +699,7 @@ export default function Home() {
                       <span className="text-muted text-xs w-6 text-right">
                         {i + 1}
                       </span>
-                      <span className="text-foreground">{film.name}</span>
+                      <span className="text-slate-900">{film.name}</span>
                     </li>
                   ))}
                 </ul>
