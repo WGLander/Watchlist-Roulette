@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
+export const runtime = "edge";
 
-const CONCURRENT_LIMIT = 5;
-const MAX_TMDB_RETRIES = 3;
+const CONCURRENT_LIMIT = 3;
+const MAX_TMDB_RETRIES = 2;
 const RETRY_STATUSES = new Set([429, 502, 503, 504]);
 const MAX_CONCURRENT_TMDB = 2;
-const MIN_TMDB_INTERVAL_MS = 150;
+const MIN_TMDB_INTERVAL_MS = 250;
 let tmdbInFlight = 0;
 let tmdbLastStart = 0;
 const tmdbWaiters: Array<() => void> = [];
