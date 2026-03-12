@@ -211,30 +211,38 @@ export default function Home() {
 
       for (let i = 0; i < items.length; i += chunkSize) {
         const chunk = items.slice(i, i + chunkSize);
-        try {
-          const res = await fetch("/api/genres", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items: chunk }),
-          });
-          if (!res.ok) continue;
-          const data = await res.json();
-          hadSuccess = true;
+        let attempt = 0;
+        let chunkSuccess = false;
+        while (attempt < 3 && !chunkSuccess) {
+          try {
+            const res = await fetch("/api/genres", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ items: chunk }),
+            });
+            if (!res.ok) throw new Error("Chunk request failed");
+            const data = await res.json();
+            hadSuccess = true;
+            chunkSuccess = true;
 
-          for (const [slug, genres] of Object.entries<string[]>(
-            data.genres || {},
-          )) {
-            mergedGenres[slug] = genres;
-            for (const g of genres) mergedGenreSet.add(g);
-          }
+            for (const [slug, genres] of Object.entries<string[]>(
+              data.genres || {},
+            )) {
+              mergedGenres[slug] = genres;
+              for (const g of genres) mergedGenreSet.add(g);
+            }
 
-          for (const [slug, runtime] of Object.entries<number | null>(
-            data.runtimes || {},
-          )) {
-            mergedRuntimes[slug] = runtime;
+            for (const [slug, runtime] of Object.entries<number | null>(
+              data.runtimes || {},
+            )) {
+              mergedRuntimes[slug] = runtime;
+            }
+          } catch {
+            attempt += 1;
+            if (attempt < 3) {
+              await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
           }
-        } catch {
-          // ignore failed chunk
         }
       }
 

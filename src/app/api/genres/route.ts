@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = 'edge';
+export const runtime = "nodejs";
 
 const CONCURRENT_LIMIT = 5;
 const MAX_TMDB_RETRIES = 3;
