@@ -29,11 +29,12 @@ interface SpinWheelProps {
 
 export default function SpinWheel({ items, onResult }: SpinWheelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [spinning, setSpinning] = useState(false);
-  const [rotation, setRotation] = useState(0);
   const rotationRef = useRef(0);
   const animFrameRef = useRef<number>(0);
   const [maxSize, setMaxSize] = useState(0);
+  const dprRef = useRef(1);
 
   // Scale wheel size up for large lists so segments stay legible
   const baseSize = 420;
@@ -43,76 +44,25 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
   const radius = size / 2 - 8;
 
   const displayItems = items;
-  const segAngle = (2 * Math.PI) / displayItems.length;
+  const segAngle = displayItems.length > 0 ? (2 * Math.PI) / displayItems.length : 0;
 
   const drawWheel = useCallback(
     (rot: number) => {
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      const staticCanvas = staticCanvasRef.current;
+      if (!canvas || !staticCanvas) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = size * dpr;
-      canvas.height = size * dpr;
-      ctx.scale(dpr, dpr);
-      canvas.style.width = `${size}px`;
-      canvas.style.height = `${size}px`;
-
+      const dpr = dprRef.current || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, size, size);
 
-      // Draw segments
-      for (let i = 0; i < displayItems.length; i++) {
-        const startAngle = rot + i * segAngle;
-        const endAngle = startAngle + segAngle;
-
-        // Segment fill
-        ctx.beginPath();
-        ctx.moveTo(center, center);
-        ctx.arc(center, center, radius, startAngle, endAngle);
-        ctx.closePath();
-        ctx.fillStyle = SEGMENT_COLORS[i % SEGMENT_COLORS.length];
-        ctx.fill();
-
-        // Segment border
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Text
-        ctx.save();
-        ctx.translate(center, center);
-        ctx.rotate(startAngle + segAngle / 2);
-
-        // Dynamic font size: shrinks as segment count grows
-        const fontSize = Math.max(5, Math.min(12, (segAngle * radius) / 2.2));
-        ctx.fillStyle = "#ffffff";
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-
-        // Truncate label based on available arc space
-        const maxChars = Math.max(
-          4,
-          Math.floor((radius * 0.75) / (fontSize * 0.55)),
-        );
-        const raw = displayItems[i];
-        const label =
-          raw.length > maxChars ? raw.slice(0, maxChars - 1) + "…" : raw;
-        ctx.fillText(label, radius - 10, 0);
-
-        ctx.restore();
-      }
-
-      // Center circle
-      ctx.beginPath();
-      ctx.arc(center, center, 22, 0, 2 * Math.PI);
-      ctx.fillStyle = "#ffffff";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(center, center, 18, 0, 2 * Math.PI);
-      ctx.fillStyle = "#f0f0f0";
-      ctx.fill();
+      ctx.save();
+      ctx.translate(center, center);
+      ctx.rotate(rot);
+      ctx.drawImage(staticCanvas, -center, -center, size, size);
+      ctx.restore();
 
       // Pointer (triangle at right side, pointing left)
       const pointerX = size - 2;
@@ -128,13 +78,95 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
       ctx.lineWidth = 2;
       ctx.stroke();
     },
-    [displayItems, segAngle, center, radius, size],
+    [center, size],
   );
 
-  // Initial draw
   useEffect(() => {
-    drawWheel(rotation);
-  }, [drawWheel, rotation]);
+    if (displayItems.length === 0 || segAngle === 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    dprRef.current = dpr;
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      canvas.style.width = `${size}px`;
+      canvas.style.height = `${size}px`;
+    }
+
+    const staticCanvas =
+      staticCanvasRef.current || document.createElement("canvas");
+    staticCanvasRef.current = staticCanvas;
+    staticCanvas.width = size * dpr;
+    staticCanvas.height = size * dpr;
+
+    const ctx = staticCanvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+
+    // Draw static wheel once (segments + text + center)
+    const segmentCount = displayItems.length;
+    const borderWidth =
+      segmentCount > 120 ? 0.2 : segmentCount > 80 ? 0.4 : segmentCount > 40 ? 0.8 : 1.5;
+    const borderAlpha =
+      segmentCount > 120 ? 0.25 : segmentCount > 80 ? 0.35 : segmentCount > 40 ? 0.5 : 1;
+
+    for (let i = 0; i < displayItems.length; i++) {
+      const startAngle = i * segAngle;
+      const endAngle = startAngle + segAngle;
+
+      // Segment fill
+      ctx.beginPath();
+      ctx.moveTo(center, center);
+      ctx.arc(center, center, radius, startAngle, endAngle);
+      ctx.closePath();
+      ctx.fillStyle = SEGMENT_COLORS[i % SEGMENT_COLORS.length];
+      ctx.fill();
+
+      // Segment border (fade/thin for large lists to avoid washing out colors)
+      ctx.strokeStyle = `rgba(255, 255, 255, ${borderAlpha})`;
+      ctx.lineWidth = borderWidth;
+      ctx.stroke();
+
+      // Text
+      ctx.save();
+      ctx.translate(center, center);
+      ctx.rotate(startAngle + segAngle / 2);
+
+      // Dynamic font size: shrinks as segment count grows
+      const fontSize = Math.max(5, Math.min(12, (segAngle * radius) / 2.2));
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+
+      // Truncate label based on available arc space
+      const maxChars = Math.max(
+        4,
+        Math.floor((radius * 0.75) / (fontSize * 0.55)),
+      );
+      const raw = displayItems[i];
+      const label =
+        raw.length > maxChars ? raw.slice(0, maxChars - 1) + "…" : raw;
+      ctx.fillText(label, radius - 10, 0);
+
+      ctx.restore();
+    }
+
+    // Center circle
+    ctx.beginPath();
+    ctx.arc(center, center, 22, 0, 2 * Math.PI);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(center, center, 18, 0, 2 * Math.PI);
+    ctx.fillStyle = "#f0f0f0";
+    ctx.fill();
+
+    drawWheel(rotationRef.current);
+  }, [displayItems, segAngle, center, radius, size, drawWheel]);
 
   useEffect(() => {
     function updateMaxSize() {
@@ -173,7 +205,6 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
       const currentRot = startRot + (targetRot - startRot) * eased;
 
       rotationRef.current = currentRot;
-      setRotation(currentRot);
       drawWheel(currentRot);
 
       if (t < 1) {
