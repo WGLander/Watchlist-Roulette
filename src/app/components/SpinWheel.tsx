@@ -22,9 +22,14 @@ const SEGMENT_COLORS = [
   "#17a2b8",
 ];
 
+interface SpinWheelItem {
+  name: string;
+  slug: string;
+}
+
 interface SpinWheelProps {
-  items: string[];
-  onResult: (item: string) => void;
+  items: SpinWheelItem[];
+  onResult: (item: SpinWheelItem) => void;
 }
 
 export default function SpinWheel({ items, onResult }: SpinWheelProps) {
@@ -43,7 +48,7 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
   const center = size / 2;
   const radius = size / 2 - 8;
 
-  const displayItems = items;
+  const displayItems = items.map((item) => item.name);
   const segAngle = displayItems.length > 0 ? (2 * Math.PI) / displayItems.length : 0;
 
   const drawWheel = useCallback(
@@ -217,7 +222,7 @@ export default function SpinWheel({ items, onResult }: SpinWheelProps) {
         const normalizedRot =
           ((-currentRot % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
         const idx = Math.floor(normalizedRot / segAngle) % displayItems.length;
-        onResult(displayItems[idx]);
+        onResult(items[idx]);
       }
     }
 

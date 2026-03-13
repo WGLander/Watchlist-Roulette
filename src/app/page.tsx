@@ -44,7 +44,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [listFilter, setListFilter] = useState<ListFilter>("all");
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<FilmEntry | null>(null);
   const [viewMode, setViewMode] = useState<"wheel" | "list">("wheel");
   const [genreDropdownOpen, setGenreDropdownOpen] = useState(false);
   const [runtimeDropdownOpen, setRuntimeDropdownOpen] = useState(false);
@@ -151,8 +151,6 @@ export default function Home() {
     runtimeMin,
     runtimeMax,
   ]);
-
-  const wheelNames = useMemo(() => wheelFilms.map((f) => f.name), [wheelFilms]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -673,12 +671,12 @@ export default function Home() {
             )}
 
           {/* Wheel / List view */}
-          {wheelNames.length > 0 ? (
+          {wheelFilms.length > 0 ? (
             viewMode === "wheel" ? (
               <>
                 <SpinWheel
-                  key={`${listFilter}-${selectedGenres.size}-${runtimeRange[0]}-${runtimeRange[1]}-${wheelNames.length}`}
-                  items={wheelNames}
+                  key={`${listFilter}-${selectedGenres.size}-${runtimeRange[0]}-${runtimeRange[1]}-${wheelFilms.length}`}
+                  items={wheelFilms}
                   onResult={(film) => setResult(film)}
                 />
                 {result && (
@@ -691,7 +689,14 @@ export default function Home() {
                       <Sparkles className="w-5 h-5 text-accent" />
                     </div>
                     <h2 className="text-xl sm:text-2xl font-bold text-foreground">
-                      {result}
+                      <a
+                        href={`https://letterboxd.com/film/${result.slug}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:underline"
+                      >
+                        {result.name}
+                      </a>
                     </h2>
                   </div>
                 )}

@@ -10,6 +10,13 @@ const MIN_TMDB_INTERVAL_MS = 250;
 let tmdbInFlight = 0;
 let tmdbLastStart = 0;
 const tmdbWaiters: Array<() => void> = [];
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+};
 
 function getTmdbCreds(): { token?: string; key?: string } {
   try {
@@ -83,6 +90,71 @@ function getRetryDelayMs(attempt: number, retryAfterHeader: string | null): numb
     }
   }
   return Math.min(10_000, 500 * (attempt + 1) ** 2);
+}
+
+async function fetchLetterboxdPage(url: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, { headers: BROWSER_HEADERS });
+      if (res.ok) return await res.text();
+      if ([403, 429, 503, 520, 521, 522].includes(res.status)) {
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        continue;
+      }
+      return null;
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+  return null;
+}
+
+function decodeHtml(input: string): string {
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, code) => {
+    const named: Record<string, string> = {
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: "\"",
+      apos: "'",
+    };
+    if (code in named) return named[code];
+    if (code.startsWith("#x")) {
+      const num = parseInt(code.slice(2), 16);
+      return Number.isNaN(num) ? match : String.fromCodePoint(num);
+    }
+    if (code.startsWith("#")) {
+      const num = parseInt(code.slice(1), 10);
+      return Number.isNaN(num) ? match : String.fromCodePoint(num);
+    }
+    return match;
+  });
+}
+
+function parseDurationToMinutes(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const iso = /^PT(?:(\d+)H)?(?:(\d+)M)?$/i.exec(trimmed);
+  if (iso) {
+    const hours = iso[1] ? parseInt(iso[1], 10) : 0;
+    const mins = iso[2] ? parseInt(iso[2], 10) : 0;
+    const total = hours * 60 + mins;
+    return Number.isFinite(total) && total > 0 ? total : null;
+  }
+  const hm = /(\d+)\s*h(?:\s*(\d+)\s*m)?/i.exec(trimmed);
+  if (hm) {
+    const hours = parseInt(hm[1], 10);
+    const mins = hm[2] ? parseInt(hm[2], 10) : 0;
+    const total = hours * 60 + mins;
+    return Number.isFinite(total) && total > 0 ? total : null;
+  }
+  const mins = /(\d{1,3})\s*mins?\b/i.exec(trimmed);
+  if (mins) {
+    const total = parseInt(mins[1], 10);
+    return Number.isFinite(total) && total > 0 ? total : null;
+  }
+  return null;
 }
 
 async function acquireTmdbSlot(): Promise<void> {
@@ -166,6 +238,113 @@ async function fetchTmdbMovie(
 interface FilmMeta {
   genres: string[];
   runtime: number | null;
+}
+
+type LetterboxdMeta = {
+  genres: string[];
+  runtime: number | null;
+};
+
+function extractJsonLdNodes(data: unknown): Record<string, any>[] {
+  const nodes: Record<string, any>[] = [];
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (item && typeof item === "object") {
+        nodes.push(item as Record<string, any>);
+      }
+    }
+  } else if (data && typeof data === "object") {
+    nodes.push(data as Record<string, any>);
+  }
+  const expanded: Record<string, any>[] = [];
+  for (const node of nodes) {
+    expanded.push(node);
+    if (Array.isArray(node["@graph"])) {
+      for (const child of node["@graph"]) {
+        if (child && typeof child === "object") {
+          expanded.push(child as Record<string, any>);
+        }
+      }
+    }
+  }
+  return expanded;
+}
+
+function parseGenresFromHtml(html: string): string[] {
+  const genres = new Set<string>();
+  const regex = /<a[^>]+href="\/films\/genre\/[^"]+\/"[^>]*>([^<]+)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(html))) {
+    const name = decodeHtml(match[1]).trim();
+    if (name) genres.add(name);
+  }
+  return [...genres];
+}
+
+function parseRuntimeFromHtml(html: string): number | null {
+  const hm = /(\d+)\s*h(?:\s*(\d+)\s*m)?/i.exec(html);
+  if (hm) {
+    const hours = parseInt(hm[1], 10);
+    const mins = hm[2] ? parseInt(hm[2], 10) : 0;
+    const total = hours * 60 + mins;
+    if (Number.isFinite(total) && total > 0) return total;
+  }
+  const mins = /(\d{1,3})\s*mins?\b/i.exec(html);
+  if (mins) {
+    const total = parseInt(mins[1], 10);
+    if (Number.isFinite(total) && total > 0) return total;
+  }
+  return null;
+}
+
+function parseLetterboxdMetaFromHtml(html: string): LetterboxdMeta {
+  let genres: string[] = [];
+  let runtime: number | null = null;
+
+  const scripts = [...html.matchAll(
+    /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi
+  )];
+  for (const match of scripts) {
+    const raw = match[1]?.trim();
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      const nodes = extractJsonLdNodes(parsed);
+      for (const node of nodes) {
+        const type = node["@type"];
+        const types = Array.isArray(type) ? type : [type];
+        if (!types.some((t) => typeof t === "string" && /movie|film/i.test(t))) {
+          continue;
+        }
+        if (genres.length === 0) {
+          const g = node.genre;
+          if (Array.isArray(g)) {
+            genres = g.filter((item: unknown) => typeof item === "string");
+          } else if (typeof g === "string") {
+            genres = [g];
+          }
+        }
+        if (runtime == null) {
+          runtime = parseDurationToMinutes(node.duration);
+        }
+      }
+    } catch {
+      // Ignore invalid JSON-LD blocks.
+    }
+    if (genres.length > 0 && runtime != null) break;
+  }
+
+  if (genres.length === 0) genres = parseGenresFromHtml(html);
+  if (runtime == null) runtime = parseRuntimeFromHtml(html);
+
+  return { genres, runtime };
+}
+
+async function fetchLetterboxdMeta(slug: string): Promise<LetterboxdMeta> {
+  const url = `https://letterboxd.com/film/${slug}/`;
+  const html = await fetchLetterboxdPage(url);
+  if (!html) return { genres: [], runtime: null };
+  return parseLetterboxdMetaFromHtml(html);
 }
 
 type TmdbSearchResult = {
@@ -277,8 +456,20 @@ async function scrapeFilmMeta(
       }
     }
   }
-  if (!id) return { genres: [], runtime: null };
-  return fetchTmdbMovie(id, stats);
+  let tmdbMeta: FilmMeta = { genres: [], runtime: null };
+  if (id) {
+    tmdbMeta = await fetchTmdbMovie(id, stats);
+  }
+
+  if (tmdbMeta.genres.length > 0 && tmdbMeta.runtime != null) {
+    return tmdbMeta;
+  }
+
+  const lbMeta = await fetchLetterboxdMeta(slug);
+  return {
+    genres: tmdbMeta.genres.length > 0 ? tmdbMeta.genres : lbMeta.genres,
+    runtime: tmdbMeta.runtime != null ? tmdbMeta.runtime : lbMeta.runtime,
+  };
 }
 
 export async function POST(request: NextRequest) {
