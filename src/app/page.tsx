@@ -353,7 +353,7 @@ export default function Home() {
             <button
               type="submit"
               disabled={loading || validUsernames.length < 1}
-              className="flex-1 py-2.5 rounded-lg bg-accent text-accent-foreground font-semibold text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 rounded-lg bg-accent text-accent-foreground font-semibold text-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {validUsernames.length >= 2 ? (
                 <>
@@ -738,15 +738,15 @@ export default function Home() {
       <footer className="mt-auto pt-16 pb-8 w-full max-w-[490px]">
         <hr className="border-border mb-8" />
         <div className="flex flex-col items-start gap-3">
-          {/* <a
+          <a
             href="https://buymeacoffee.com/wglander"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-accent text-accent-foreground font-semibold text-sm hover:bg-accent-hover transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-accent text-accent-foreground font-semibold text-sm hover:bg-accent/90 transition-colors"
           >
             <span className="text-lg">☕</span>
             Support this project
-          </a> */}
+          </a>
           <p className="text-sm text-muted">
             The github for this project lives{" "}
             <a
